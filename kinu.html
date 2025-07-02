@@ -1,0 +1,389 @@
+survey-platform/
+├── client/
+│   ├── index.html          ← Your dashboard (existing or create)
+│   ├── register.html       ← Registration page
+│   ├── login.html          ← Login page
+│   ├── style.css           ← Optional shared styles
+│   └── script.js           ← Optional shared scripts
+├── server/
+│   ├── models/
+│   │   └── User.js
+│   ├── routes/
+│   │   └── auth.js
+│   ├── .env
+│   └── server.js
+├── package.json
+MONGO_URI=mongodb://localhost:27017/surveyapp
+JWT_SECRET=supersecretjwtkey
+const mongoose = require("mongoose");
+
+const UserSchema = new mongoose.Schema({
+  phone: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  password: {
+    type: String,
+    required: true,
+  },
+  referralCode: {
+    type: String,
+    unique: true,
+  },
+  referredBy: {
+    type: String,
+    default: null,
+  },
+  referralEarnings: {
+    type: Number,
+    default: 0,
+  },
+});
+
+module.exports = mongoose.model("User", UserSchema);
+const express = require("express");
+const router = express.Router();
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const User = require("../models/User");
+
+// Generate 6-char referral code
+function generateCode() {
+  return Math.random().toString(36).substr(2, 6).toUpperCase();
+}
+
+// Register
+router.post("/register", async (req, res) => {
+  const { phone, password, referredBy } = req.body;
+
+  try {
+    const existing = await User.findOne({ phone });
+    if (existing) return res.status(400).json({ msg: "Phone already registered" });
+
+    const hashed = await bcrypt.hash(password, 10);
+    const referralCode = generateCode();
+
+    const user = new User({
+      phone,
+      password: hashed,
+      referralCode,
+      referredBy: referredBy || null,
+    });
+
+    await user.save();
+
+    // 10% referral bonus
+    if (referredBy) {
+      const refUser = await User.findOne({ referralCode: referredBy });
+      if (refUser) {
+        refUser.referralEarnings += 10;
+        await refUser.save();
+      }
+    }
+
+    res.status(201).json({ msg: "User registered", referralCode });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: "Server error" });
+  }
+});
+
+// Login
+router.post("/login", async (req, res) => {
+  const { phone, password } = req.body;
+
+  try {
+    const user = await User.findOne({ phone });
+    if (!user) return res.status(400).json({ msg: "Invalid credentials" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ msg: "Invalid credentials" });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        phone: user.phone,
+        referralCode: user.referralCode,
+        referralEarnings: user.referralEarnings,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ msg: "Server error" });
+  }
+});
+
+module.exports = router;
+const express = require("express");
+const mongoose = require("mongoose");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const authRoutes = require("./routes/auth");
+
+dotenv.config();
+
+const app = express();
+
+app.use(cors());            // Allow cross-origin requests (important for frontend-backend on different ports)
+app.use(express.json());
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB connected"))
+  .catch(err => console.error(err));
+
+app.use("/api/auth", authRoutes);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+{
+  "name": "survey-platform-server",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^7.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Register - SurveyPro</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f7fa;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    form {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    input {
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      outline: none;
+      transition: 0.2s;
+    }
+    input:focus {
+      border-color: #3a86ff;
+      box-shadow: 0 0 8px #3a86ff66;
+    }
+    button {
+      padding: 12px;
+      background: #3a86ff;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background: #2f6fd1;
+    }
+    .message {
+      font-size: 14px;
+      margin-top: 10px;
+      color: red;
+    }
+    .success {
+      color: green;
+    }
+    a {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+      text-decoration: none;
+      text-align: center;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <form id="registerForm">
+    <h2>Register</h2>
+    <input type="text" id="phone" placeholder="Phone Number" required pattern="[0-9]{10,15}" title="Enter a valid phone number" />
+    <input type="password" id="password" placeholder="Password" required minlength="6" />
+    <input type="text" id="referral" placeholder="Referral Code (optional)" maxlength="6" />
+    <button type="submit">Register</button>
+    <div class="message" id="message"></div>
+    <a href="login.html">Already have an account? Login</a>
+  </form>
+
+  <script>
+    const form = document.getElementById("registerForm");
+    const messageDiv = document.getElementById("message");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const phone = form.phone.value.trim();
+      const password = form.password.value;
+      const referralCode = form.referral.value.trim();
+
+      messageDiv.textContent = "";
+      messageDiv.classList.remove("success");
+
+      try {
+        const res = await fetch("http://localhost:5000/api/auth/register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            phone,
+            password,
+            referredBy: referralCode || undefined,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          messageDiv.textContent = `Registered successfully! Your referral code: ${data.referralCode}`;
+          messageDiv.classList.add("success");
+          form.reset();
+        } else {
+          messageDiv.textContent = data.msg || "Registration failed";
+        }
+      } catch (err) {
+        messageDiv.textContent = "Server error. Please try again later.";
+      }
+    });
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Login - SurveyPro</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f7fa;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    form {
+      background: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    input {
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      outline: none;
+      transition: 0.2s;
+    }
+    input:focus {
+      border-color: #3a86ff;
+      box-shadow: 0 0 8px #3a86ff66;
+    }
+    button {
+      padding: 12px;
+      background: #3a86ff;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    button:hover {
+      background: #2f6fd1;
+    }
+    .message {
+      font-size: 14px;
+      margin-top: 10px;
+      color: red;
+    }
+    .success {
+      color: green;
+    }
+    a {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #555;
+      text-decoration: none;
+      text-align: center;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <form id="loginForm">
+    <h2>Login</h2>
+    <input type="text" id="phone" placeholder="Phone Number" required pattern="[0-9]{10,15}" title="Enter your phone number" />
+    <input type="password" id="password" placeholder="Password" required minlength="6" />
+    <button type="submit">Login</button>
+    <div class="message" id="message"></div>
+    <a href="register.html">Don't have an account? Register</a>
+  </form>
+
+  <script>
+    const form = document.getElementById("loginForm");
+    const messageDiv = document.getElementById("message");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const phone = form.phone.value.trim();
+      const password = form.password.value;
+
+      messageDiv.textContent = "";
+      messageDiv.classList.remove("success");
+
+      try {
+        const res = await fetch("http://localhost:5000/api/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ phone, password }),
+        });
+
+        const data = await res.json
